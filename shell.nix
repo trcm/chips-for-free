@@ -1,4 +1,5 @@
 let 
+  pkgs = import <nixpkgs> {};
   ghcPtr = import ./nix/nix-ghc-ptr.nix;
   pinnedPkgs = ghcPtr.pinnedPkgs;
   myPackages = (import ./release.nix { withHoogle = true; } );
@@ -8,6 +9,8 @@ let
     buildInputs = oldAttrs.buildInputs ++ [ 
       pinnedPkgs.haskellPackages.cabal-install
       pinnedPkgs.haskellPackages.hlint
+      pkgs.haskellPackages.ghcid
+      pkgs.haskellPackages.stylish-haskell
       # If you want to use HIE, run `cachix use all-hies`, restart nix daemon, and uncomment below 
       # all-hies.versions.${ghcPtr.hieVer}
       ];

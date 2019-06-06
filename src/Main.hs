@@ -1,49 +1,58 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+
 module Main where
 
-import Polysemy
-import Polysemy.Input
-import Polysemy.Output
+import qualified Control.Applicative           as A
+import qualified Data.ByteString               as BS
+import           Polysemy
+import           Polysemy.Input
+import           Polysemy.Output
+import           Chip
+import           Data.Vector
+import           GHC.Word                       ( Word8
+                                                , Word16
+                                                )
+import           Data.Function
 
-data Teletype m a where
-  ReadTTY  :: Teletype m String
-  WriteTTY :: String -> Teletype m ()
+type Rom = BS.ByteString
 
-makeSem ''Teletype
+data Cpu = Cpu { _pc :: Int }
 
-runTeletypeIO :: Member (Lift IO) r => Sem (Teletype ': r) a -> Sem r a
-runTeletypeIO = interpret $ \case
-  ReadTTY      -> sendM getLine
-  WriteTTY msg -> sendM $ putStrLn msg
+data EmuState = Running | Stopped | Finished
 
-runTeletypePure :: [String] -> Sem (Teletype ': r) a -> Sem r ([String], a)
-runTeletypePure i
-  = runFoldMapOutput pure  -- For each WriteTTY in our program, consume an output by appending it to the list in a ([String], a)
-  . runListInput i         -- Treat each element of our list of strings as a line of input
-  . reinterpret2 \case     -- Reinterpret our effect in terms of Input and Output
-      ReadTTY -> maybe "" id <$> input
-      WriteTTY msg -> output msg
+data Emu m a where
+  ReadInstruction :: Int -> Rom -> Emu m Word8
 
+makeSem ''Emu
 
-echo :: Member Teletype r => Sem r ()
-echo = do
-  i <- readTTY
-  case i of
-    "" -> pure ()
-    _  -> writeTTY i >> echo
+data CpuEff m a where
+  DecodeOpcode :: Word8 -> CpuEff m a
+  ProcessInstruction :: a -> CpuEff m a
 
+makeSem ''CpuEff
 
--- Let's pretend
-echoPure :: [String] -> Sem '[] ([String], ())
-echoPure = flip runTeletypePure echo
+loadRom :: IO BS.ByteString
+loadRom = BS.readFile "./roms/PONG"
 
-pureOutput :: [String] -> [String]
-pureOutput = fst . run . echoPure
+startEmu :: (Member (Input Rom) r, Member (Input Cpu) r, Member Emu r) => Sem r ()
+startEmu = do
+  rom <- input @Rom
+  cpu <- input @Cpu
+  readInstruction (_pc cpu) rom
+  undefined
 
--- Now let's do things
-echoIO :: Sem '[Lift IO] ()
-echoIO = runTeletypeIO echo
+runEmu :: Sem (Emu ': r ) a -> Sem r a
+runEmu = interpret $ \case
+  ReadInstruction pc rom -> do
+    pure $ BS.index rom pc
 
 -- echo forever
 main :: IO ()
-main = runM echoIO
+main = do
+  rom <- loadRom
+  startEmu & runConstInput @Rom rom & runConstInput @Cpu (Cpu 0) & runEmu & runM
+
+
